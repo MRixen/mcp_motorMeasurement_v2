@@ -14,6 +14,7 @@ union pwm_data
 };
 pwm_data pwmValue;
 byte pwm_motorDirection;
+byte encoder_motorDirection;
 short pwmValueTemp = 0;
 bool motorIsActive = false;
 
@@ -25,7 +26,8 @@ long MAX_TIMEOUT = 2000;
 
 // USER DEFINED
 const int SLOW_DOWN_CODE = 2;
-const byte BYTE_TO_READ = 3;
+const byte BYTE_TO_READ = 0x03;
+const byte BYTES_TO_SEND = 0x03;
 
 // ---- MCP SETUP BEGIN----
 const byte REGISTER_TXB0SIDL_VALUE = 0x40;
@@ -193,7 +195,6 @@ const byte REGISTER_CNF1_VALUE = 0x00;//0x03; // Baud rate prescaler calculated 
 const byte REGISTER_CNF2_VALUE = 0xB8;//0x90; // BTLMODE = 1 (PHaseSegment 2 is configured with CNF 3) and PhaseSegment 1 = 8xTQ (7+1)
 const byte REGISTER_CNF3_VALUE = 0x05;//0x02; // Set PhaseSegment 2 = 6xTQ (5+1)
 bool currentTxBuffer[] = { true, false, false };
-const byte MESSAGE_SIZE_TO_SEND = 0x02;
 
 byte rxStateIst = 0x00;
 const byte rxStateSoll = 0x03;
@@ -213,7 +214,7 @@ const byte SPI_INSTRUCTION_RTS_BUFFER2 = 0x84;
 const byte SPI_INSTRUCTION_READ_STATUS = 0xA0;
 const byte SPI_INSTRUCTION_RX_STATUS = 0xB0;
 const byte SPI_INSTRUCTION_BIT_MODIFY = 0x05;
-byte ReadBuf[7]; // Read buffer of size 6 bytes (2 bytes * 3 axes)
+byte SendBuffer[3];
 
 // GLOBAL DATA
 const long MAX_WAIT_TIME = 10000;
@@ -259,9 +260,9 @@ void setup()
 	initMcp2515();
 
 	// Set identifier, message length, etc.
-	mcp2515_init_tx_buffer0(REGISTER_TXBxSIDL_VALUE[0], REGISTER_TXBxSIDH_VALUE[0], MESSAGE_SIZE_TO_SEND);
-	mcp2515_init_tx_buffer1(REGISTER_TXBxSIDL_VALUE[1], REGISTER_TXBxSIDH_VALUE[1], MESSAGE_SIZE_TO_SEND);
-	mcp2515_init_tx_buffer2(REGISTER_TXBxSIDL_VALUE[2], REGISTER_TXBxSIDH_VALUE[2], MESSAGE_SIZE_TO_SEND);
+	mcp2515_init_tx_buffer0(REGISTER_TXBxSIDL_VALUE[0], REGISTER_TXBxSIDH_VALUE[0], BYTES_TO_SEND);
+	mcp2515_init_tx_buffer1(REGISTER_TXBxSIDL_VALUE[1], REGISTER_TXBxSIDH_VALUE[1], BYTES_TO_SEND);
+	mcp2515_init_tx_buffer2(REGISTER_TXBxSIDL_VALUE[2], REGISTER_TXBxSIDH_VALUE[2], BYTES_TO_SEND);
 
 	// Start timer to measure the program execution
 	errorTimerValue = millis();
@@ -276,6 +277,14 @@ void setup()
 
 void loop()
 {
+	// MESSAGES COMING FROM RASPBERRY VIA CAN BUS:
+	// BYTE 1: DIRECTION OF MOTOR
+	// BYTE 2, 3: PWM VALUE
+
+	// MESSAGES GOING TO RASPBERRY VIA CAN BUS:
+	// BYTE 1: DIRECTION OF MOTOR
+	// BYTE 2, 3: ENCODER VALUE
+
 	rxStateIst = 0x00;
 	pwmValueTemp = 0;
 	motorIsActive = true;
@@ -285,7 +294,7 @@ void loop()
 	while ((digitalRead(di_mcp2515_int_rec) == 1)) {
 		delay(1);
 
-		// Set pwm value to zero when nothing comes in
+		// Set pwm value slowly to zero when nothing comes in
 		if (((millis() - timeout_start) >= MAX_TIMEOUT) & (motorIsActive)) {
 			for (int i = pwmValue.pwm; i > 10; i = i - 5) {
 				analogWrite(do_pwm, i);
@@ -306,31 +315,35 @@ void loop()
 	if (pwm_motorDirection == 0) digitalWrite(do_motorDirection, HIGH);
 	else digitalWrite(do_motorDirection, LOW);
 
-
+	delay(20);
 
 	// Rotate motor
 	analogWrite(do_pwm, pwmValue.pwm);
 
 	//Serial.println(pwmValue.pwm);
 
-	// Write encoder and direction value to buffer
-	//if (encoderValue < 0) {
-	//	ReadBuf[5] = 0;
-	//	encoderValue = encoderValue*(-1);
-	//}
-	//else ReadBuf[5] = 1;
+	// Write encoder direction to buffer
+	if (encoderValue < 0) {
+		SendBuffer[0] = 0;
+		encoderValue = encoderValue*(-1);
+	}
+	else SendBuffer[0] = 1;
 
-	//ReadBuf[3] = lowByte(encoderValue);
-	//ReadBuf[4] = highByte(encoderValue);
+	// Write encoder value to buffer
+	SendBuffer[1] = lowByte(encoderValue);
+	SendBuffer[2] = highByte(encoderValue);
 
-	// Send data to mcp
-	//for (size_t i = 0; i < MESSAGE_SIZE_TO_SEND; i++) mcp2515_load_tx_buffer0(ReadBuf[i], i, MESSAGE_SIZE_TO_SEND);
-	//mcp2515_execute_rts_command(0);
+	// TEST
+	SendBuffer[0] = pwm_motorDirection;
+	SendBuffer[1] = pwmValue.bytes[0];
+	SendBuffer[2] = pwmValue.bytes[1];
+	// TEST
 
-	delay(40);
+	//Send data to mcp
+	for (size_t i = 0; i < BYTES_TO_SEND; i++) mcp2515_load_tx_buffer0(SendBuffer[i], i, BYTES_TO_SEND);
+	mcp2515_execute_rts_command(0);
 
-	//pulseCounter = pulseCounter + 1;
-	//if (pulseCounter > MAX_PULSES) pulseCounter = 1;
+	delay(20);
 }
 
 bool receivePwmData(byte rxStateIst, byte rxStateSoll)
