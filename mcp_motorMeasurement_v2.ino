@@ -12,16 +12,22 @@ union pwm_data
 	short pwm;
 	byte bytes[2];
 };
+
 pwm_data pwmValue;
 byte pwm_motorDirection;
 byte encoder_motorDirection;
 short pwmValueTemp = 0;
 bool motorIsActive = false;
+const double ENCODER_TO_DEGREE = ((double)360 / 34608);
+const int MULTIPLICATION_FACTOR = 10;
+bool firstStart;
+const int MAX_ENCODER_OFFSET = 60;
 
 long timeout_start = 0;
 int value = 0;
 float SAMPLE_TIME = 10;
-int encoderValue = 0;
+long encoderValue = 0;
+int encoderValueTemp = 0;
 long MAX_TIMEOUT = 2000;
 
 // USER DEFINED
@@ -214,7 +220,7 @@ const byte SPI_INSTRUCTION_RTS_BUFFER2 = 0x84;
 const byte SPI_INSTRUCTION_READ_STATUS = 0xA0;
 const byte SPI_INSTRUCTION_RX_STATUS = 0xB0;
 const byte SPI_INSTRUCTION_BIT_MODIFY = 0x05;
-byte SendBuffer[3];
+byte sendBuffer[3];
 
 // GLOBAL DATA
 const long MAX_WAIT_TIME = 10000;
@@ -236,6 +242,9 @@ void setup()
 {
 	// Configure serial interface
 	Serial.begin(9600);
+
+	// Configure program data
+	firstStart = true;
 
 	// USER CONFIGURATION
 	debugMode = false;
@@ -289,6 +298,15 @@ void loop()
 	pwmValueTemp = 0;
 	motorIsActive = true;
 
+	// Move motor until 60deg to elmininate encoder offset 
+	while(firstStart){
+		if (encoderValue < MAX_ENCODER_OFFSET) analogWrite(do_pwm, 50);
+		else {
+			analogWrite(do_pwm, 0);
+			firstStart = false;
+		}
+	}
+
 	// Wait until a message is received in buffer 0 or 1
 	timeout_start = millis();
 	while ((digitalRead(di_mcp2515_int_rec) == 1)) {
@@ -312,6 +330,7 @@ void loop()
 	receivePwmData(rxStateIst, rxStateSoll);
 
 	// Configure direction value for motor
+	// Direction input: when DIR is high (positive) current will flow from OUTA to OUTB, when it is low current will flow from OUTB to OUTA (negative).
 	if (pwm_motorDirection == 0) digitalWrite(do_motorDirection, HIGH);
 	else digitalWrite(do_motorDirection, LOW);
 
@@ -321,26 +340,28 @@ void loop()
 	analogWrite(do_pwm, pwmValue.pwm);
 
 	//Serial.println(pwmValue.pwm);
+	encoderValueTemp = encoderValue*ENCODER_TO_DEGREE*MULTIPLICATION_FACTOR;
+	//Serial.println(encoderValueTemp);
 
 	// Write encoder direction to buffer
-	if (encoderValue < 0) {
-		SendBuffer[0] = 0;
-		encoderValue = encoderValue*(-1);
+	if (encoderValueTemp < 0) {
+		sendBuffer[0] = 0;
+		encoderValueTemp = encoderValueTemp*(-1);
 	}
-	else SendBuffer[0] = 1;
+	else sendBuffer[0] = 1;
 
 	// Write encoder value to buffer
-	SendBuffer[1] = lowByte(encoderValue);
-	SendBuffer[2] = highByte(encoderValue);
+	sendBuffer[1] = lowByte(encoderValueTemp);
+	sendBuffer[2] = highByte(encoderValueTemp);
 
 	// TEST
-	SendBuffer[0] = pwm_motorDirection;
-	SendBuffer[1] = pwmValue.bytes[0];
-	SendBuffer[2] = pwmValue.bytes[1];
+	//sendBuffer[0] = pwm_motorDirection;
+	//sendBuffer[1] = pwmValue.bytes[0];
+	//sendBuffer[2] = pwmValue.bytes[1];
 	// TEST
 
 	//Send data to mcp
-	for (size_t i = 0; i < BYTES_TO_SEND; i++) mcp2515_load_tx_buffer0(SendBuffer[i], i, BYTES_TO_SEND);
+	for (size_t i = 0; i < BYTES_TO_SEND; i++) mcp2515_load_tx_buffer0(sendBuffer[i], i, BYTES_TO_SEND);
 	mcp2515_execute_rts_command(0);
 
 	delay(20);
