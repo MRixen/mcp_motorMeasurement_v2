@@ -28,7 +28,8 @@ int value = 0;
 float SAMPLE_TIME = 10;
 long encoderValue = 0;
 int encoderValueTemp = 0;
-long MAX_TIMEOUT = 2000;
+int encoderValueTest = 0;
+long MAX_TIMEOUT = 4000;
 
 // USER DEFINED
 const int SLOW_DOWN_CODE = 2;
@@ -197,9 +198,12 @@ const byte REGISTER_RXMxSIDH_VALUE[] = { REGISTER_RXM0SIDH_VALUE, REGISTER_RXM1S
 const byte REGISTER_TXBxSIDL_VALUE[] = { REGISTER_TXB0SIDL_VALUE, REGISTER_TXB1SIDL_VALUE, REGISTER_TXB2SIDL_VALUE };
 const byte REGISTER_TXBxSIDH_VALUE[] = { REGISTER_TXB0SIDH_VALUE, REGISTER_TXB1SIDH_VALUE, REGISTER_TXB2SIDH_VALUE };
 
-const byte REGISTER_CNF1_VALUE = 0x00;//0x03; // Baud rate prescaler calculated with application (Fosc = 8Mhz and CANspeed = 125kHz)
-const byte REGISTER_CNF2_VALUE = 0xB8;//0x90; // BTLMODE = 1 (PHaseSegment 2 is configured with CNF 3) and PhaseSegment 1 = 8xTQ (7+1)
-const byte REGISTER_CNF3_VALUE = 0x05;//0x02; // Set PhaseSegment 2 = 6xTQ (5+1)
+const byte REGISTER_CNF1_VALUE = 0x00; // Baud rate prescaler calculated with application (Fosc = 8Mhz and CANspeed = 125kHz)
+const byte REGISTER_CNF2_VALUE = 0xB8; // BTLMODE = 1 (PHaseSegment 2 is configured with CNF 3) and PhaseSegment 1 = 8xTQ (7+1)
+const byte REGISTER_CNF3_VALUE = 0x05; // Set PhaseSegment 2 = 6xTQ (5+1)
+//const byte REGISTER_CNF1_VALUE = 0x03;
+//const byte REGISTER_CNF2_VALUE = 0x90;
+//const byte REGISTER_CNF3_VALUE = 0x02;
 bool currentTxBuffer[] = { true, false, false };
 
 byte rxStateIst = 0x00;
@@ -298,14 +302,17 @@ void loop()
 	pwmValueTemp = 0;
 	motorIsActive = true;
 
+	// !!! IMPORTANT NOTE !!!
+	// We need to rotate around 60 deg for the big gear motor (with integrated encoder) only
 	// Move motor until 60deg to elmininate encoder offset 
-	while(firstStart){
-		if (encoderValue < MAX_ENCODER_OFFSET) analogWrite(do_pwm, 50);
-		else {
-			analogWrite(do_pwm, 0);
-			firstStart = false;
-		}
-	}
+	//while(firstStart){
+	//	if (encoderValue < MAX_ENCODER_OFFSET) analogWrite(do_pwm, 50);
+	//	else {
+	//		analogWrite(do_pwm, 0);
+	//		firstStart = false;
+	//	}
+	//	//Serial.println(encoderValue);
+	//}
 
 	// Wait until a message is received in buffer 0 or 1
 	timeout_start = millis();
@@ -317,11 +324,23 @@ void loop()
 			for (int i = pwmValue.pwm; i > 10; i = i - 5) {
 				analogWrite(do_pwm, i);
 				delay(40);
+				//Serial.println(encoderValue);
 			}
+			// Move motor to zero position
+			if(encoderValue < 0) digitalWrite(do_motorDirection, LOW);
+			else digitalWrite(do_motorDirection, HIGH);
+
+			while (abs(encoderValue) > 0) {
+				if(abs(encoderValue) > 300) analogWrite(do_pwm, 255);
+				else analogWrite(do_pwm, 127);
+				//Serial.println(encoderValue);
+			}
+
 			analogWrite(do_pwm, 0);
 			motorIsActive = false;
 		}
 	}
+	//Serial.println(encoderValue);
 
 	// Get current rx buffer
 	rxStateIst = mcp2515_execute_read_state_command(do_csMcp2515);
@@ -340,7 +359,14 @@ void loop()
 	analogWrite(do_pwm, pwmValue.pwm);
 
 	//Serial.println(pwmValue.pwm);
-	encoderValueTemp = encoderValue*ENCODER_TO_DEGREE*MULTIPLICATION_FACTOR;
+
+	// !!! IMPORTANT NOTE !!!
+	// We need the ENCODER_TO_DEGREE value for the big gear motor (with integrated encoder) only
+	//encoderValueTemp = encoderValue*ENCODER_TO_DEGREE*MULTIPLICATION_FACTOR;
+	//Serial.println(encoderValue);
+
+	encoderValueTemp = encoderValue*MULTIPLICATION_FACTOR;
+	//encoderValueTemp = encoderValueTest*MULTIPLICATION_FACTOR;
 	//Serial.println(encoderValueTemp);
 
 	// Write encoder direction to buffer
@@ -365,6 +391,8 @@ void loop()
 	mcp2515_execute_rts_command(0);
 
 	delay(20);
+
+	//encoderValueTest = encoderValueTest + 1;
 }
 
 bool receivePwmData(byte rxStateIst, byte rxStateSoll)
