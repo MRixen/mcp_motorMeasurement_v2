@@ -1,11 +1,18 @@
 #include <SPI.h>
 #define di_encoderPinA 2
 #define di_encoderPinB 3
-#define do_motorDirection 4
 #define do_csMcp2515 8
 #define do_csArduino 10
 #define do_pwm 9
 #define di_mcp2515_int_rec 7
+
+// For big motor
+#define do_motorDirection1 4
+
+// For small motor
+#define do_motorDirection2 5
+#define do_motorStandby 6
+
 
 union pwm_data
 {
@@ -251,7 +258,7 @@ void setup()
 	firstStart = true;
 
 	// USER CONFIGURATION
-	debugMode = false;
+	debugMode = true;
 
 	// Define I/Os
 	pinMode(do_csMcp2515, OUTPUT); // Set as input to enable pull up resistor. It's neccessary because the ss line is defined at pin 10 + 9
@@ -259,11 +266,15 @@ void setup()
 	pinMode(di_encoderPinA, INPUT);
 	pinMode(di_encoderPinB, INPUT);
 	pinMode(di_mcp2515_int_rec, INPUT);
-	pinMode(do_motorDirection, OUTPUT);
+	pinMode(do_motorDirection1, OUTPUT);
+	pinMode(do_motorDirection2, OUTPUT);
+	pinMode(do_motorStandby, OUTPUT);
 
 	// Configure I/Os
 	digitalWrite(do_csMcp2515, HIGH);
 	digitalWrite(do_csArduino, HIGH);
+
+	digitalWrite(do_motorStandby, HIGH);
 
 	// Configure SPI
 	SPI.beginTransaction(SPISettings(5000000, MSBFIRST, SPI_MODE3));
@@ -311,13 +322,14 @@ void loop()
 	//		analogWrite(do_pwm, 0);
 	//		firstStart = false;
 	//	}
-	//	//Serial.println(encoderValue);
+		//Serial.println(encoderValue);
 	//}
 
 	// Wait until a message is received in buffer 0 or 1
 	timeout_start = millis();
 	while ((digitalRead(di_mcp2515_int_rec) == 1)) {
 		delay(1);
+		//Serial.println(encoderValue);
 
 		// Set pwm value slowly to zero when nothing comes in
 		if (((millis() - timeout_start) >= MAX_TIMEOUT) & (motorIsActive)) {
@@ -327,8 +339,14 @@ void loop()
 				//Serial.println(encoderValue);
 			}
 			// Move motor to zero position
-			if(encoderValue < 0) digitalWrite(do_motorDirection, LOW);
-			else digitalWrite(do_motorDirection, HIGH);
+			if (encoderValue < 0) {
+				digitalWrite(do_motorDirection1, HIGH);
+				digitalWrite(do_motorDirection2, LOW);
+			}
+			else {
+				digitalWrite(do_motorDirection1, LOW);
+				digitalWrite(do_motorDirection2, HIGH);
+			}
 
 			while (abs(encoderValue) > 0) {
 				if(abs(encoderValue) > 300) analogWrite(do_pwm, 255);
@@ -340,18 +358,28 @@ void loop()
 			motorIsActive = false;
 		}
 	}
-	//Serial.println(encoderValue);
 
-	// Get current rx buffer
-	rxStateIst = mcp2515_execute_read_state_command(do_csMcp2515);
 
-	// Read pwm and motor direction data
-	receivePwmData(rxStateIst, rxStateSoll);
+	// Check if message is received in buffer 0 or 1
+	if ((digitalRead(di_mcp2515_int_rec) == 0))
+	{
+		// Get current rx buffer
+		rxStateIst = mcp2515_execute_read_state_command(do_csMcp2515);
+
+		// Read pwm and motor direction data
+		receivePwmData(rxStateIst, rxStateSoll);
+	}
 
 	// Configure direction value for motor
 	// Direction input: when DIR is high (positive) current will flow from OUTA to OUTB, when it is low current will flow from OUTB to OUTA (negative).
-	if (pwm_motorDirection == 0) digitalWrite(do_motorDirection, HIGH);
-	else digitalWrite(do_motorDirection, LOW);
+	if (pwm_motorDirection == 0) {
+		digitalWrite(do_motorDirection1, LOW);
+		digitalWrite(do_motorDirection2, HIGH);
+	}
+	else {
+		digitalWrite(do_motorDirection1, HIGH);
+		digitalWrite(do_motorDirection2, LOW);
+	}
 
 	delay(20);
 
@@ -391,6 +419,7 @@ void loop()
 	mcp2515_execute_rts_command(0);
 
 	delay(20);
+	Serial.println(encoderValue);
 
 	//encoderValueTest = encoderValueTest + 1;
 }
@@ -464,6 +493,7 @@ void mcp2515_execute_reset_command() {
 	while (REGISTER_CANSTAT_CONFIGURATION_MODE != (REGISTER_CANSTAT_CONFIGURATION_MODE & actualMode))
 	{
 		actualMode = mcp2515_execute_read_command(REGISTER_CANSTAT, do_csMcp2515);
+		Serial.print(actualMode);
 	}
 
 	if (debugMode) Serial.print("Mcp2515 reset succesfully and switch do mode ");
